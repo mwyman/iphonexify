@@ -1,0 +1,201 @@
+#!/usr/bin/env sh
+#
+# Makes Xcode 9.1 beta simulator screenshots for iPhone X appear nice.
+#
+# Xcode 9.1 beta's simulator no longer includes the iPhone X sensor notch
+# or rounded corners when saving screenshots with ⌘S. This script handles
+# sending the screenshot files through ImageMagick to create an image
+# suitable for bugs/critique comments, as otherwise they will be plain
+# rectangles with a full-width image.
+#
+# The output images can have either black or transparent notch/corners,
+# and for landscape the notch can be positioned on either the left or
+# right side.
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "${SOURCE}" ]; do # Resolve links in ${SOURCE}
+  SOURCE_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+  SOURCE="$(readlink "${SOURCE}")"
+  # resolve relative symlinks:
+  [[ ${SOURCE} != /* ]] && SOURCE="${SOURCE_DIR}/${SOURCE}"
+done
+SOURCE_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+
+# Simulator screenshots are saved with spaces in the filename.
+# Override $IFS to deal with spaces nicely.
+IFS=$(echo "\n\b")
+
+# Whether to show more verbose output.
+VERBOSE=false
+
+# Whether to quiet all output.
+QUIET=false
+
+OPEN_OUTDIR_AFTER=false
+
+# Default landscape images to landscape-left orientation.
+ROTATION_ARGS=("-rotate" "-90")
+
+# Whether to draw the safe area insets on the image
+DRAW_SAFE_AREA=no
+
+# iPhone X is an @3x device, so default to scale to @1x. (I hate seeing
+# 2/3x images in BetterBuganizer, etc, as the extra pixels are usually
+# not necessary.)
+SCALING_ARGS=(-scale 33.33333%)
+
+# Location of the mask file.
+MASK_FILE="${SOURCE_DIR}/.iphonexify-mask.png"
+
+# Masking modifiers. When creating a black background, must flatten the mask
+# onto a black background, but when creating a transparent background, need
+# to remove these so the alpha pixels remain.
+MASK_MODIFIERS=(-background Black -flatten)
+
+# The compositing command. Will be "multiply" for a black background, but
+# "copy-opacity" for a transparent background.
+COMPOSITING_ARGS=(-compose multiply -composite)
+
+# Whether to delete files converting them.
+DELETE_AFTER=no
+
+# Output directory.
+OUTDIR="${HOME}/Desktop/Screens/iPhoneX"
+
+FILES=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -right|--right)
+      ROTATION_ARGS=(-rotate 90)
+      shift
+      ;;
+    -left|--left)
+      ROTATION_ARGS=(-rotate -90)
+      shift
+      ;;
+    -no-scale|--no-scale)
+      SCALING_ARGS=()
+      shift
+      ;;
+    -scale|--scale)
+      SCALING_ARGS=(-scale "$2")
+      shift
+      shift
+      ;;
+    -transparent|--transparent)
+      COMPOSITING_ARGS=(-compose copy-alpha -composite)
+      MASK_MODIFIERS=()
+      shift
+      ;;
+    -show-safe-area|--show-safe-area)
+      DRAW_SAFE_AREA=yes
+      shift
+      ;;
+    --outdir)
+      OUTDIR="$2"
+      shift
+      shift
+      ;;
+    --mask)
+      MASK_FILE="$2"
+      shift
+      shift
+      ;;
+    --delete)
+      DELETE_AFTER=yes
+      shift
+      ;;
+    --verbose|-v)
+      VERBOSE=true
+      shift
+      ;;
+    --quiet|-q)
+      QUIET=true
+      VERBOSE=false
+      shift
+      ;;
+    --open|-O)
+      OPEN_OUTDIR_AFTER=true
+      shift
+      ;;
+    -help|--help)
+      echo $(basename "$0") " [--right|--left] [--scale <%>|--no-scale] [--transparent] [--outdir <dir>] [--mask <path>] FILE [FILE...]"
+      exit 1
+      ;;
+    *)
+      FILES+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Ensure the output directory exists.
+mkdir -p "${OUTDIR}"
+
+for file in ${FILES[@]}; do
+  CMD=("convert" "$file")
+  CMD+=(
+    "("
+    "${MASK_FILE}"
+    ${MASK_MODIFIERS[@]}
+  )
+
+  LANDSCAPE=no
+  if [ $(identify -format '%h' "$file") == "1125" ]; then
+    # Rotate the mask file for landscape
+    CMD+=(${ROTATION_ARGS[@]})
+    LANDSCAPE=yes
+  fi
+
+  CMD+=(
+    ")"
+    ${COMPOSITING_ARGS[@]}
+    ${SCALING_ARGS[@]}
+  )
+
+  if [ "$DRAW_SAFE_AREA" == "yes" ]; then
+    CMD+=(
+      "-stroke"
+      "red"
+    )
+    if [ "$LANDSCAPE" == "yes" ]; then
+      CMD+=(
+        "-draw"
+        "line 44,0 44,375"
+        "-draw"
+        "line 768,0 768,375"
+        "-draw"
+        "line 44,354 768,354"
+      )
+    else
+      CMD+=(
+        "-draw"
+        "line 0,44 375,44"
+        "-draw"
+        "line 0,778 375,778"
+      )
+    fi
+  fi
+
+  CMD+=(
+    "${OUTDIR}/$(basename $file)"
+  )
+
+  if [ "${QUIET}" == false ]; then
+    echo "Converting: ${file} --> ${OUTDIR}/$(basename $file)"
+    if [ "${VERBOSE}" == true ]; then
+      echo "${CMD[@]}"
+    fi
+  fi
+  # Execute the command
+  "${CMD[@]}"
+
+  if [ $? -eq 0 ] && [ "$DELETE_AFTER" == "yes" ]; then
+    rm "$file"
+  fi
+done
+
+if [ "${OPEN_OUTDIR_AFTER}" == true ] && [ ${#FILES[@]} -gt 0 ]; then
+  open --reveal "${OUTDIR}/$(basename ${FILES[${#FILES[@]} - 1]})"
+fi
+
