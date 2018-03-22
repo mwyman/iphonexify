@@ -59,6 +59,14 @@ COMPOSITING_ARGS=(-compose multiply -composite)
 # Whether to delete files converting them.
 DELETE_AFTER=no
 
+# Upload server, where iphonex-ified images will be uploaded. Requires
+# either an environment variable or the server URL to be passed in
+# via the --server parameter. Should be able to just upload data.
+UPLOAD_SERVER="${IPHONEXIFY_UPLOAD_SERVER}"
+
+# Whether to upload files after converting.
+UPLOAD_FILES=no
+
 # Output directory.
 OUTDIR="${HOME}/Desktop/Screens/iPhoneX"
 
@@ -116,6 +124,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --open|-O)
       OPEN_OUTDIR_AFTER=true
+      shift
+      ;;
+    --upload)
+      UPLOAD_FILES=yes
+      shift
+      ;;
+    --server)
+      UPLOAD_SERVER="$2"
+      shift
       shift
       ;;
     -help|--help)
@@ -177,12 +194,14 @@ for file in ${FILES[@]}; do
     fi
   fi
 
+  OUTFILE_PATH="${OUTDIR}/$(basename $file)"
+
   CMD+=(
-    "${OUTDIR}/$(basename $file)"
+    "${OUTFILE_PATH}"
   )
 
   if [ "${QUIET}" == false ]; then
-    echo "Converting: ${file} --> ${OUTDIR}/$(basename $file)"
+    echo "Converting: ${file} --> ${OUTFILE_PATH}"
     if [ "${VERBOSE}" == true ]; then
       echo "${CMD[@]}"
     fi
@@ -190,8 +209,19 @@ for file in ${FILES[@]}; do
   # Execute the command
   "${CMD[@]}"
 
-  if [ $? -eq 0 ] && [ "$DELETE_AFTER" == "yes" ]; then
-    rm "$file"
+  if [ $? -eq 0 ]; then # Successfully converted.
+    if [ "$UPLOAD_FILES" == "yes" ] && [ ! -z "${UPLOAD_SERVER}" ]; then
+      # Attempt to upload the output.
+      if [ "${VERBOSE}" == true ]; then
+        echo "Uploading to ${UPLOAD_SERVER}."
+      fi
+      URI=$(curl -sF "imagedata=@${OUTFILE_PATH}" "${UPLOAD_SERVER}")
+      echo "${file} uploaded --> ${URI}"
+    fi
+
+    if [ "$DELETE_AFTER" == "yes" ]; then
+      rm "$file"
+    fi
   fi
 done
 
